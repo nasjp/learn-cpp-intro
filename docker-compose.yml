@@ -1,0 +1,7 @@
+version: "3.4"
+services:
+  cpp: &cpp
+    image: gcc:latest
+    volumes:
+      - .:/cpp
+    working_dir: /cpp
