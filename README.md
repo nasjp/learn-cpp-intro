@@ -2,4 +2,4 @@
 
 Refs: <https://ezoeryou.github.io/cpp-intro/>
 
-続き: <https://ezoeryou.github.io/cpp-intro/#vector>
+続き: <https://ezoeryou.github.io/cpp-intro/#for_each>

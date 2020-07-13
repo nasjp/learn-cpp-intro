@@ -1,19 +1,18 @@
 #include "all.h"
 
-int input() {
-  int x{};
-  std::cin >> x;
-  return x;
-}
-
-int factorial(int n) {
-  if (n < 2) {
-    return n;
-  }
-  return n * factorial(n - 1);
-}
+auto print = [](auto const &x) { std::cout << x << std::endl; };
 
 int main() {
-  auto n = input();
-  std::cout << factorial(n) << std::endl;
+  int x = 0;
+
+  int &ref = x;
+  // OK
+  ++ref;
+
+  const int &const_ref = ref;
+
+  print(const_ref);
+
+  ++ref;
+  print(const_ref);
 }
