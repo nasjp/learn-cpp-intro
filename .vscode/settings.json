@@ -85,7 +85,8 @@
 		"utility": "cpp",
 		"vector": "cpp",
 		"filesystem": "cpp",
-		"version": "cpp"
+		"version": "cpp",
+		"valarray": "cpp"
 	},
 	"C_Cpp.errorSquiggles": "Disabled",
 }

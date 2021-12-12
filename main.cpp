@@ -65,7 +65,15 @@ struct Logger {
   ~Logger() { std::cout << name << " is destructed.\n"s; }
 };
 
-template <typename T, typename Allocator = std::allocator<T> >
+template <typename Func>
+struct scope_exit {
+  Func cleanup;
+
+  scope_exit(Func&& f) : cleanup(std::forward<Func>(f)) {}
+  ~scope_exit() { cleanup(); }
+};
+
+template <typename T, typename Allocator = std::allocator<T>>
 class vector {
  public:
   using value_type = T;
@@ -87,11 +95,11 @@ class vector {
 
  private:
   // 先頭の要素へのポインター
-  pointer first;
+  pointer first = nullptr;
   // 最後の要素の1つ後方のポインター
-  pointer last;
+  pointer last = nullptr;
   // 確保したストレージの終端
-  pointer reserved_last;
+  pointer reserved_last = nullptr;
   // アロケーターの値
   allocator_type alloc;
 
@@ -106,6 +114,13 @@ class vector {
   void construct(pointer ptr, value_type&& value) {
     traits::construct(alloc, ptr, std::move(value));
   }
+  void destroy(pointer ptr) { traits::destroy(alloc, ptr); }
+  void destroy_until(reverse_iterator rend) {
+    for (auto riter = rbegin(); riter != rend; ++riter, --last) {
+      destroy(&*riter);
+    }
+  }
+  void clear() noexcept { destroy_until(rend()); }
 
  public:
   iterator begin() noexcept { return first; }
@@ -153,7 +168,8 @@ class vector {
   pointer data() noexcept { return first; }
   const_pointer data() const noexcept { return first; }
 
-  vector(const allocator_type& alloc = allocator_type()) : vector(alloc) {}
+  vector(const allocator_type& alloc = allocator_type()) noexcept
+      : alloc(alloc) {}
   vector(size_type size, const allocator_type& alloc = allocator_type())
       : vector(alloc) {
     resize(size);
@@ -163,6 +179,87 @@ class vector {
       : vector(alloc) {
     resize(size, value);
   }
+
+  ~vector() {
+    // 1. 要素を末尾から先頭に向かう順番で破棄
+    clear();
+    // 2. 生のメモリーを解放する
+    deallocate();
+  }
+
+  void reserve(size_type sz) {
+    // すでに指定された要素数以上に予約されているなら何もしない
+    if (sz <= capacity()) return;
+
+    // 動的メモリー確保をする
+    auto ptr = allocate(sz);
+
+    // 古いストレージの情報を保存
+    auto old_first = first;
+    auto old_last = last;
+    auto old_capacity = capacity();
+
+    // 新しいストレージに差し替え
+    first = ptr;
+    last = first;
+    reserved_last = first + sz;
+
+    // 例外安全のため
+    // 関数を抜けるときに古いストレージを破棄する
+    scope_exit s([&] { traits::deallocate(alloc, old_first, old_capacity); });
+
+    // 古いストレージから新しいストレージに要素をコピー構築
+    // 実際にはムーブ構築
+    for (auto old_iter = old_first; old_iter != old_last; ++old_iter, ++last) {
+      // このコピーの理解にはムーブセマンティクスの理解が必要
+      construct(last, std::move(*old_iter));
+    }
+
+    // 新しいストレージにコピーし終えたので
+    // 古いストレージの値は破棄
+    for (auto riter = reverse_iterator(old_last),
+              rend = reverse_iterator(old_first);
+         riter != rend; ++riter) {
+      destroy(&*riter);
+    }
+    // scope_exitによって自動的にストレージが破棄される
+  }
+
+  void resize(size_type sz) {
+    // 現在の要素数より少ない
+    if (sz < size()) {
+      auto diff = size() - sz;
+      destroy_until(rbegin() + diff);
+      last = first + sz;
+    }
+    // 現在の要素数より大きい
+    else if (sz > size()) {
+      reserve(sz);
+      for (; last != reserved_last; ++last) {
+        construct(last);
+      }
+    }
+  }
+
+  void resize(size_type sz, const_reference value) {
+    // 現在の要素数より少ない
+    if (sz < size()) {
+      auto diff = size() - sz;
+      destroy_until(rbegin() + diff);
+      last = first + sz;
+    }
+    // 現在の要素数より大きい
+    else if (sz > size()) {
+      reserve(sz);
+      for (; last != reserved_last; ++last) {
+        construct(last, value);
+      }
+    }
+  }
+};
+
+struct X {
+  ~X() { std::cout << "destructed. => "s << this << std::endl; }
 };
 
 int main() {
@@ -354,7 +451,7 @@ int main() {
       auto ptr = ::operator new(1);
       ::operator delete(ptr);
       std::cout << "malloc succeeded" << std::endl;
-    } catch (std::bad_alloc e) {
+    } catch (const std::bad_alloc&) {
       std::cout << "malloc failed" << std::endl;
     }
   }
@@ -366,7 +463,7 @@ int main() {
       logger_ptr->~Logger();
       ::operator delete(logger_ptr);
       std::cout << "succeeded" << std::endl;
-    } catch (std::bad_alloc e) {
+    } catch (const std::bad_alloc&) {
       std::cout << "failed" << std::endl;
     }
   }
@@ -376,7 +473,7 @@ int main() {
       auto logger_ptr = new Logger{"Alice"s};
       delete logger_ptr;
       std::cout << "succeeded" << std::endl;
-    } catch (std::bad_alloc e) {
+    } catch (const std::bad_alloc&) {
       std::cout << "failed" << std::endl;
     }
   }
@@ -386,7 +483,7 @@ int main() {
       int* int_array_ptr = new int[5]{1, 2, 3, 4, 5};
       delete[] int_array_ptr;
       std::cout << "succeeded" << std::endl;
-    } catch (std::bad_alloc e) {
+    } catch (const std::bad_alloc&) {
       std::cout << "failed" << std::endl;
     }
   }
@@ -437,5 +534,41 @@ int main() {
     }
 
     traits::deallocate(a, p, N);
+  }
+
+  {
+    std::vector<X> v(5);
+    v.resize(2);
+    std::cout << "resized.\n"s;
+  }
+
+  // my vector
+  {
+    auto print_all = [](auto first, auto last) {
+      // ループ
+      for (auto iter = first; iter != last; ++iter) {
+        // 重要な処理
+        std::cout << "v[]: " << *iter << std::endl;
+      }
+    };
+
+    vector<int> v1;
+
+    std::cout << "first" << std::endl;
+    print_all(v1.cbegin(), v1.cend());
+
+    std::cout << "second" << std::endl;
+    v1.resize(1);
+    print_all(v1.cbegin(), v1.cend());
+
+    std::cout << "third" << std::endl;
+    v1.resize(5);
+    v1[3] = 300;
+    v1[4] = 800;
+    print_all(v1.cbegin(), v1.cend());
+
+    std::cout << "forth" << std::endl;
+    v1.resize(8, 100);
+    print_all(v1.cbegin(), v1.cend());
   }
 }
