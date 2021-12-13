@@ -78,6 +78,7 @@ class vector {
  public:
   using value_type = T;
   using pointer = T*;
+  using pointer_const = const T*;
   using const_pointer = const pointer;
   using reference = value_type&;
   using const_reference = const value_type&;
@@ -256,6 +257,66 @@ class vector {
       }
     }
   }
+
+  void push_back(const_reference value) {
+    // 予約メモリーが足りなければ拡張
+    if (size() + 1 > capacity()) {
+      // 現在のストレージサイズ
+      auto c = size();
+      // 0の場合は1に
+      if (c == 0) {
+        c = 1;
+      } else {
+        // それ以外の場合は2倍する
+        c *= 2;
+      }
+
+      reserve(c);
+    }
+    construct(last, value);
+    ++last;
+  }
+
+  void shrink_to_fit() {
+    // 何もする必要がない
+    if (size() == capacity()) return;
+
+    // 新しいストレージを確保
+    auto ptr = allocate(size());
+    // コピー
+    auto current_size = size();
+    for (auto raw_ptr = ptr, iter = begin(), iter_end = end(); iter != iter_end;
+         ++iter, ++raw_ptr) {
+      construct(raw_ptr, *iter);
+    }
+    // 破棄
+    clear();
+    deallocate();
+    // 新しいストレージを使う
+    first = ptr;
+    last = ptr + current_size;
+    reserved_last = last;
+  }
+
+  // vector(const_iterator first, const_iterator last,
+  vector(pointer_const first, pointer_const last,
+         const allocator_type& alloc = allocator_type())
+      : vector(alloc) {
+    reserve(std::distance(first, last));
+    for (auto i = first; i != last; ++i) {
+      push_back(*i);
+    }
+  }
+
+  vector(std::initializer_list<value_type> init,
+         const allocator_type& alloc = allocator_type())
+      : vector(std::begin(init), std::end(init), alloc) {}
+
+  vector(const vector& r)
+      : first(r.first),
+        last(r.last),
+        reserved_last(r.reserved_last),
+        alloc(r.alloc) {}
 };
 
 struct X {
@@ -542,16 +603,16 @@ int main() {
     std::cout << "resized.\n"s;
   }
 
+  auto print_all = [](auto first, auto last) {
+    // ループ
+    for (auto iter = first; iter != last; ++iter) {
+      // 重要な処理
+      std::cout << "v[]: " << *iter << std::endl;
+    }
+  };
+
   // my vector
   {
-    auto print_all = [](auto first, auto last) {
-      // ループ
-      for (auto iter = first; iter != last; ++iter) {
-        // 重要な処理
-        std::cout << "v[]: " << *iter << std::endl;
-      }
-    };
-
     vector<int> v1;
 
     std::cout << "first" << std::endl;
@@ -570,5 +631,55 @@ int main() {
     std::cout << "forth" << std::endl;
     v1.resize(8, 100);
     print_all(v1.cbegin(), v1.cend());
+  }
+
+  {
+    vector<int> v(10, 1);
+    v[2] = 99;
+    v.resize(5);
+
+    print_all(v.cbegin(), v.cend());
+  }
+
+  {
+    // 要素数10000
+    vector<int> v(1000);
+    // 10001個分のメモリーを確保する
+    // 10000個の既存の要素をコピーする
+    v.push_back(0);
+    // 10002個分のメモリーを確保する
+    // 10001個の既存の要素をコピーする
+    v.push_back(0);
+  }
+
+  {
+    vector<int> v;
+    v.push_back(0);
+    v.push_back(0);
+    v.push_back(0);
+    std::cout << (v.size() == v.capacity()) << std::endl;
+    v.shrink_to_fit();
+    std::cout << (v.size() == v.capacity()) << std::endl;
+  }
+
+  {
+    std::array<int, 5> a{1, 2, 3, 4, 5};
+    vector<int> v(std::begin(a), std::end(a));
+
+    print_all(v.cbegin(), v.cend());
+  }
+
+  {
+    std::array<int, 5> a1{1, 2, 3, 4, 5};
+    vector<int> v1(std::begin(a1), std::end(a1));
+    vector<int> v2(std::cbegin(a1), std::cend(a1));
+    const std::array<int, 5> a2{1, 2, 3, 4, 5};
+    vector<int> v3(std::begin(a2), std::end(a2));
+    vector<int> v4(std::cbegin(a2), std::cend(a2));
+  }
+
+  {
+    vector<int> v = {1, 2, 3};
+    print_all(v.cbegin(), v.cend());
   }
 }
