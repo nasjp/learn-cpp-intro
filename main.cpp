@@ -313,15 +313,101 @@ class vector {
       : vector(std::begin(init), std::end(init), alloc) {}
 
   vector(const vector& r)
-      : first(r.first),
-        last(r.last),
-        reserved_last(r.reserved_last),
-        alloc(r.alloc) {}
+      // アロケーターのコピー
+      : alloc(traits::select_on_container_copy_construction(r.alloc)) {
+    // コピー元の要素数を保持できるだけのストレージを確保
+    reserve(r.size());
+    // コピー元の要素をコピー構築
+    // destはコピー先
+    // [src, last)はコピー元
+    for (auto dest = first, src = r.begin(), last = r.end(); src != last;
+         ++dest, ++src) {
+      construct(dest, *src);
+    }
+    last = first + r.size();
+  }
+
+  vector& operator=(const vector& r) {
+    // 1. 自分自身への代入なら何もしない
+    if (this == &r) {
+      return *this;
+    }
+
+    // 2. 要素数が同じならば
+    if (size() == r.size()) {
+      // 要素ごとにコピー代入
+      std::copy(r.begin(), r.end(), begin());
+
+      return *this;
+    }
+
+    // 3. それ以外の場合で
+    // 予約数が十分ならば、
+    if (capacity() >= r.size()) {
+      // 有効な要素はコピー
+      std::copy(r.begin(), r.begin() + r.size(), begin());
+      // 残りはコピー構築
+      for (auto src_iter = r.begin() + r.size(), src_end = r.end();
+           src_iter != src_end; ++src_iter, ++last) {
+        construct(last, *src_iter);
+      }
+
+      return *this;
+    }
+
+    // 4. 予約数が不十分ならば
+    // 要素をすべて破棄
+    clear();
+    // 予約
+    reserve(r.size());
+    // コピー構築
+    for (auto src_iter = r.begin(), src_end = r.end(), dest_iter = begin();
+         src_iter != src_end; ++src_iter, ++dest_iter, ++last) {
+      construct(dest_iter, *src_iter);
+    }
+
+    return *this;
+  }
 };
 
 struct X {
   ~X() { std::cout << "destructed. => "s << this << std::endl; }
 };
+
+template <typename T>
+class own {
+ private:
+  T* ptr;
+
+ public:
+  own() : ptr(new T) {}
+  ~own() { delete ptr; }
+  own(const own&) = default;
+  own& operator=(const own& r) {
+    // 自分自身への代入でなければ
+    if (this != &r) {
+      // コピー処理
+      *ptr = *r.ptr;
+    }
+
+    return *this;
+  }
+
+  T* get() const { return ptr; }
+};
+
+int&& gg() { return 0; }
+
+template <typename T>
+void ggg(T&& t) {}
+
+template <typename T>
+void can_lvalu_rvalue_arg(T&& t) {
+  // 無条件にxvalueが渡される
+  ggg(std::move(t));
+  // tがlvalueならばlvalueとして、rvalueならばxvalueとして渡される
+  ggg(std::forward<T>(t));
+}
 
 int main() {
   {
@@ -682,4 +768,96 @@ int main() {
     vector<int> v = {1, 2, 3};
     print_all(v.cbegin(), v.cend());
   }
+
+  {
+    own<int> a;
+    a = a;
+  }
+
+  {
+    int object = 1;
+    // xvalue
+    int&& r = static_cast<int&&>(object);
+
+    std::cout << "r: " << r << std::endl;
+  }
+
+  {
+    int lvalue{};
+    int&& r1 = std::move(lvalue);
+    int&& r2 = static_cast<int&&>(lvalue);
+
+    std::boolalpha(std::cout);
+    std::cout << "r1 == r2: " << (r1 == r2) << std::endl;
+  }
+
+  // value category
+  {
+    int object = 12;
+    auto f = [&]() -> int& { return object; };
+
+    // int&& gg = []() -> int&& { return 0; };
+    auto h = [] { return 0; };
+
+    // lvalue reference
+    int& lvalue_reference1 = object;
+    int& lvalue_reference2 = f();
+
+    // rvalue reference
+    int&& rvalue_reference1 = 0;
+    int&& rvalue_reference2 = 1 + 1;
+    int&& rvalue_reference3 = gg();
+    int&& rvalue_reference4 = h();
+
+    // const lvalue reference
+    const int& const_lvalue_reference1 = 0;
+    const int& const_lvalue_reference2 = 1 + 1;
+    const int& const_lvalue_reference3 = gg();
+    const int& const_lvalue_reference4 = h();
+
+    // lvalue reference to rvalue reference
+    int& lvalue_reference_to_rvalue_reference = rvalue_reference1;
+
+    // pvalue
+    0;
+    1 + 1;
+    f();
+
+    // xvalue
+    int&& xvalue1 = gg();
+    int&& xvalue2 = static_cast<int&&>(object);
+    int&& xvalue3 = std::move(object);
+    int a[3] = {1, 2, 3};
+    int&& xvalue4 = static_cast<int(&&)[3]>(a)[0];
+    struct X {
+      int data_member;
+    };
+    X x{};
+    int&& xvalue5 = static_cast<X&&>(x).data_member;
+  }
+
+  {
+    using A = std::remove_reference_t<int>;
+    // int
+    using B = std::remove_reference_t<int&>;
+    // int
+    using C = std::remove_reference_t<int&&>;
+
+    std::cout << "A == B: " << (std::is_same_v<A, B>) << std::endl;
+    std::cout << "A == C: " << (std::is_same_v<A, C>) << std::endl;
+    std::cout << "B == C: " << (std::is_same_v<A, C>) << std::endl;
+  }
+
+  {
+    int lvalue{};
+    can_lvalu_rvalue_arg(lvalue);  // can use lvalue
+    can_lvalu_rvalue_arg(0);       // can use rvalue
+  }
+
+  {
+    auto p = std::make_unique<std::vector<int>>();
+    p->push_back(0);
+  }
+
+  // { std::cout << "こんにちは"s << std::endl; }
 }
