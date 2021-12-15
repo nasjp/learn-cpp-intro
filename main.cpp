@@ -859,5 +859,5 @@ int main() {
     p->push_back(0);
   }
 
-  // { std::cout << "こんにちは"s << std::endl; }
+  { std::cout << "こんにちは"s << std::endl; }
 }
